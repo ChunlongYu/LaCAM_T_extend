@@ -249,191 +249,484 @@ Planner::~Planner()
 // }
 
 
+// 20260311初步测试可行版，无ucb
+// Solution Planner::solve(std::string& additional_info)
+// {
+//   solver_info(1, "start search");
+
+//   // setup agents
+//   for (uint i = 0; i < N; ++i) {
+//     A[i]->v_now = ins->starts[i].v;
+//     A[i]->o_now = ins->starts[i].o;
+//     A[i]->swap_completed = true; 
+//     reserved_nodes[i] = nullptr; 
+//   }
+
+//   // setup search
+//   auto H_init = new HNode(ins->starts, D, nullptr, 0, get_h_value(ins->starts));
+  
+//   // 定义双队列
+//   std::stack<HNode*> OPEN_DFS; 
+//   std::queue<HNode*> OPEN_BFS; 
+  
+//   std::unordered_map<Config, HNode*, ConfigHasher> EXPLORED;
+//   std::vector<HNode*> GC;  
+
+//   // 初始节点同时加入
+//   OPEN_DFS.push(H_init);
+//   OPEN_BFS.push(H_init);
+
+//   EXPLORED[H_init->C] = H_init;
+//   GC.push_back(H_init);
+
+//   HNode* H_goal = nullptr;
+  
+//   // [变量] 定义不同阶段的 DFS 比例
+//   const float RATIO_PHASE_1 = 1.0f; // 找解阶段：100% DFS
+//   const float RATIO_PHASE_2 = 0.3f; // 优化阶段：50% DFS / 50% BFS
+
+//   while ((!OPEN_DFS.empty() || !OPEN_BFS.empty()) && !is_expired(deadline)) {
+//     loop_cnt += 1;
+
+//     // -------------------------------------------------------------
+//     // [逻辑] 动态决定当前策略
+//     // -------------------------------------------------------------
+//     float current_dfs_ratio;
+//     if (H_goal == nullptr) {
+//         current_dfs_ratio = RATIO_PHASE_1; // 还没找到解，只用DFS
+//     } else {
+//         current_dfs_ratio = RATIO_PHASE_2; // 找到解了，开始广度覆盖
+//     }
+
+//     // -------------------------------------------------------------
+//     // [逻辑] 从队列取节点
+//     // -------------------------------------------------------------
+//     HNode* H = nullptr;
+//     bool is_dfs_step = true;
+
+//     // 1. 如果 DFS 空了，强制用 BFS；如果 BFS 空了，强制用 DFS
+//     if (OPEN_DFS.empty()) {
+//         is_dfs_step = false;
+//     } else if (OPEN_BFS.empty()) {
+//         is_dfs_step = true;
+//     } else {
+//         // 2. 都有货，按概率决定
+//         // float r = get_random_float(MT); 
+//         // if (r < current_dfs_ratio) {
+//         //     is_dfs_step = true;
+//         // } else {
+//         //     is_dfs_step = false;
+//         // }
+//         if (current_dfs_ratio >= 0.999f) {
+//             is_dfs_step = true;
+//         } 
+//         else if (current_dfs_ratio <= 0.001f) {
+//             is_dfs_step = false;
+//         } 
+//         else {
+//             // 只有进入 Phase 2 (0.5) 时才消耗随机数
+//             float r = get_random_float(MT); 
+//             if (r < current_dfs_ratio) {
+//                 is_dfs_step = true;
+//             } else {
+//                 is_dfs_step = false;
+//             }
+//         }
+//     }
+
+//     // 执行取操作
+//     if (is_dfs_step) {
+//         H = OPEN_DFS.top();
+//         OPEN_DFS.pop();
+//     } else {
+//         H = OPEN_BFS.front();
+//         OPEN_BFS.pop();
+//     }
+
+//     // 检查节点是否枯竭 (因为节点可能同时存在于两个队列，可能已经被另一个队列处理完了)
+//     if (H->search_tree.empty()) {
+//         continue;
+//     }
+
+//     // check goal condition
+//     if (H_goal == nullptr && is_same_config_pos(H->C, ins->goals)) {
+//       H_goal = H;
+//       solver_info(1, "found solution, cost: ", H->g);
+      
+//       // [关键] 找到解后，H_goal 不再是 nullptr
+//       // 下一次循环开始，current_dfs_ratio 就会自动变成 0.5
+      
+//       if (objective == OBJ_NONE) break;
+//       continue;
+//     }
+
+//     // check invalid nodes (剪枝)
+//     // 无论是哪个队列拿出来的，只要比当前解差，就剪掉
+//     if (H_goal != nullptr && H->f >= H_goal->f) {
+//       continue;
+//     }
+
+//     // expand low-level search tree
+//     auto L = H->search_tree.front();
+//     H->search_tree.pop();
+//     expand_lowlevel_tree(H, L);
+
+//     // [回放策略] 如果还有剩余约束，放回原队列，保持该队列的连续性
+//     if (!H->search_tree.empty()) {
+//         if (is_dfs_step) OPEN_DFS.push(H);
+//         else OPEN_BFS.push(H);
+//     }
+
+//     // create new configuration
+//     if (!get_new_config(H, L)) {
+//       delete L;
+//       continue;
+//     }
+//     delete L;
+
+//     auto C_new = Config(N, State{nullptr});
+//     for (auto a : A) {
+//       C_new[a->id] = State{a->v_next, a->o_next};
+//     }
+
+//     // check explored
+//     auto iter = EXPLORED.find(C_new);
+//     if (iter != EXPLORED.end()) {
+//       // known config
+//       // Rewrite 通常依然优先使用 DFS 队列，因为我们希望优化能尽快生效
+//       rewrite(H, iter->second, H_goal, OPEN_DFS); 
+      
+//       auto H_known = iter->second;
+//       if (!H_known->search_tree.empty()) {
+//           OPEN_DFS.push(H_known);
+//           // 旧节点复活时，也可以选择加入 BFS，视内存情况而定
+//           // OPEN_BFS.push(H_known); 
+//       }
+//     } else {
+//       // new config
+//       auto H_new = new HNode(C_new, D, H, H->g + get_edge_cost(H->C, C_new),
+//                              get_h_value(C_new));
+//       EXPLORED[H_new->C] = H_new;
+//       GC.push_back(H_new);
+      
+//       // [关键] 新节点必须同时加入两个队列
+//       // 即使现在是 DFS 阶段 (Phase 1)，我们也必须把它放入 BFS 队列。
+//       // 这样一旦找到解切换到 Phase 2，BFS 队列里才有“存档”可以读取。
+//       OPEN_DFS.push(H_new);
+//       OPEN_BFS.push(H_new);
+//     }
+//   }
+
+//   solver_info(1, "end search, node_num: ", GC.size());
+
+//   // backtrack
+//   if (H_goal == nullptr) {
+//     for (auto h : GC) delete h;
+//     return Solution();
+//   }
+//   auto solution = Solution();
+//   auto H = H_goal;
+//   while (H != nullptr) {
+//     solution.push_back(H->C);
+//     H = H->parent;
+//   }
+//   std::reverse(solution.begin(), solution.end());
+
+//   for (auto h : GC) delete h;
+//   return solution;
+// }
 
 Solution Planner::solve(std::string& additional_info)
 {
-  solver_info(1, "start search");
+    solver_info(1, "start search");
 
-  // setup agents
-  for (uint i = 0; i < N; ++i) {
-    A[i]->v_now = ins->starts[i].v;
-    A[i]->o_now = ins->starts[i].o;
-    A[i]->swap_completed = true; 
-    reserved_nodes[i] = nullptr; 
-  }
-
-  // setup search
-  auto H_init = new HNode(ins->starts, D, nullptr, 0, get_h_value(ins->starts));
-  
-  // 定义双队列
-  std::stack<HNode*> OPEN_DFS; 
-  std::queue<HNode*> OPEN_BFS; 
-  
-  std::unordered_map<Config, HNode*, ConfigHasher> EXPLORED;
-  std::vector<HNode*> GC;  
-
-  // 初始节点同时加入
-  OPEN_DFS.push(H_init);
-  OPEN_BFS.push(H_init);
-
-  EXPLORED[H_init->C] = H_init;
-  GC.push_back(H_init);
-
-  HNode* H_goal = nullptr;
-  
-  // [变量] 定义不同阶段的 DFS 比例
-  const float RATIO_PHASE_1 = 1.0f; // 找解阶段：100% DFS
-  const float RATIO_PHASE_2 = 0.3f; // 优化阶段：50% DFS / 50% BFS
-
-  while ((!OPEN_DFS.empty() || !OPEN_BFS.empty()) && !is_expired(deadline)) {
-    loop_cnt += 1;
-
-    // -------------------------------------------------------------
-    // [逻辑] 动态决定当前策略
-    // -------------------------------------------------------------
-    float current_dfs_ratio;
-    if (H_goal == nullptr) {
-        current_dfs_ratio = RATIO_PHASE_1; // 还没找到解，只用DFS
-    } else {
-        current_dfs_ratio = RATIO_PHASE_2; // 找到解了，开始广度覆盖
+    // setup agents
+    for (uint i = 0; i < N; ++i) {
+        A[i]->v_now = ins->starts[i].v;
+        A[i]->o_now = ins->starts[i].o;
+        A[i]->swap_completed = true;
+        reserved_nodes[i] = nullptr;
     }
 
-    // -------------------------------------------------------------
-    // [逻辑] 从队列取节点
-    // -------------------------------------------------------------
-    HNode* H = nullptr;
-    bool is_dfs_step = true;
+    // setup search
+    auto H_init = new HNode(ins->starts, D, nullptr, 0, get_h_value(ins->starts));
 
-    // 1. 如果 DFS 空了，强制用 BFS；如果 BFS 空了，强制用 DFS
-    if (OPEN_DFS.empty()) {
-        is_dfs_step = false;
-    } else if (OPEN_BFS.empty()) {
-        is_dfs_step = true;
-    } else {
-        // 2. 都有货，按概率决定
-        // float r = get_random_float(MT); 
-        // if (r < current_dfs_ratio) {
-        //     is_dfs_step = true;
-        // } else {
-        //     is_dfs_step = false;
-        // }
-        if (current_dfs_ratio >= 0.999f) {
-            is_dfs_step = true;
-        } 
-        else if (current_dfs_ratio <= 0.001f) {
-            is_dfs_step = false;
+    std::deque<HNode*> OPEN;
+    std::unordered_map<Config, HNode*, ConfigHasher> EXPLORED;
+    std::vector<HNode*> GC;
+
+    OPEN.push_back(H_init);
+    EXPLORED[H_init->C] = H_init;
+    GC.push_back(H_init);
+
+    HNode* H_goal = nullptr;
+
+    // ============================================================
+    // UCB 阶段统计
+    // ============================================================
+    struct PhaseStats {
+        double total_reward = 0.0;
+        int selection_count = 0;
+        
+        double getUCB(int total_sel, double c = 1.414) const {
+            if (selection_count == 0) return 1e9;
+            return (total_reward / selection_count) + 
+                   c * std::sqrt(std::log(total_sel + 1) / selection_count);
+        }
+    };
+    
+    PhaseStats phases[3];
+    int total_ucb_selections = 0;
+
+    // ============================================================
+    // [新增] 记录每个区域的边界索引
+    // ============================================================
+    // 区域划分：[0, boundary[0]) [boundary[0], boundary[1]) [boundary[1], size)
+    // 即：      Phase 0           Phase 1                   Phase 2
+    size_t boundary[2] = {0, 0};  // 两个分界点
+
+    while (!OPEN.empty() && !is_expired(deadline)) {
+        loop_cnt += 1;
+
+        HNode* H = nullptr;
+        int selected_phase = -1;
+
+        if (H_goal == nullptr) {
+            // ============================================================
+            // 阶段1：寻找初始解，纯 DFS
+            // ============================================================
+            H = OPEN.back();
+            OPEN.pop_back();
+            
+            // 更新边界（后端减少了一个）
+            if (boundary[1] > OPEN.size()) boundary[1] = OPEN.size();
+            if (boundary[0] > boundary[1]) boundary[0] = boundary[1];
         } 
         else {
-            // 只有进入 Phase 2 (0.5) 时才消耗随机数
-            float r = get_random_float(MT); 
-            if (r < current_dfs_ratio) {
-                is_dfs_step = true;
+            // ============================================================
+            // 阶段2：优化阶段，UCB 选择
+            // ============================================================
+            size_t n = OPEN.size();
+            if (n == 0) break;
+
+            // 确保边界合法
+            if (boundary[0] > n) boundary[0] = n;
+            if (boundary[1] > n) boundary[1] = n;
+            if (boundary[1] < boundary[0]) boundary[1] = boundary[0];
+
+            // 计算各区域大小
+            size_t size_phase0 = boundary[0];
+            size_t size_phase1 = boundary[1] - boundary[0];
+            size_t size_phase2 = n - boundary[1];
+
+            // 选择 UCB 最大且非空的区域
+            double best_ucb = -1.0;
+            for (int i = 0; i < 3; ++i) {
+                size_t phase_size = (i == 0) ? size_phase0 : 
+                                    (i == 1) ? size_phase1 : size_phase2;
+                if (phase_size > 0) {
+                    double ucb = phases[i].getUCB(total_ucb_selections);
+                    if (ucb > best_ucb) {
+                        best_ucb = ucb;
+                        selected_phase = i;
+                    }
+                }
+            }
+
+            // 如果没选中任何区域（不应该发生）
+            if (selected_phase < 0) {
+                H = OPEN.back();
+                OPEN.pop_back();
+                if (boundary[1] > OPEN.size()) boundary[1] = OPEN.size();
+                if (boundary[0] > boundary[1]) boundary[0] = boundary[1];
             } else {
-                is_dfs_step = false;
+                // 确定区间
+                size_t start_idx, end_idx;
+                if (selected_phase == 0) {
+                    start_idx = 0;
+                    end_idx = boundary[0];
+                } else if (selected_phase == 1) {
+                    start_idx = boundary[0];
+                    end_idx = boundary[1];
+                } else {
+                    start_idx = boundary[1];
+                    end_idx = n;
+                }
+
+                // 在区间内随机选择
+                std::uniform_int_distribution<size_t> dist(start_idx, end_idx - 1);
+                size_t chosen_idx = dist(*MT);
+
+                H = OPEN[chosen_idx];
+                OPEN.erase(OPEN.begin() + chosen_idx);
+
+                // 更新边界（删除了一个元素）
+                if (chosen_idx < boundary[0]) {
+                    boundary[0]--;
+                    boundary[1]--;
+                } else if (chosen_idx < boundary[1]) {
+                    boundary[1]--;
+                }
+                // 如果在 Phase 2 删除，边界不变
+            }
+        }
+
+        // 检查节点是否枯竭
+        if (H->search_tree.empty()) {
+            continue;
+        }
+
+        // check goal condition
+        if (H_goal == nullptr && is_same_config_pos(H->C, ins->goals)) {
+            H_goal = H;
+            solver_info(1, "found initial solution, cost: ", H->g);
+            
+            // 初始化边界：将当前 OPEN 三等分
+            size_t n = OPEN.size();
+            boundary[0] = n / 3;
+            boundary[1] = 2 * n / 3;
+            
+            if (objective == OBJ_NONE) break;
+            continue;
+        }
+
+        // 剪枝
+        if (H_goal != nullptr && H->f >= H_goal->f) {
+            continue;
+        }
+
+        // expand low-level search tree
+        auto L = H->search_tree.front();
+        H->search_tree.pop();
+        expand_lowlevel_tree(H, L);
+
+        // ============================================================
+        // 放回策略：放回原区域
+        // ============================================================
+        if (!H->search_tree.empty()) {
+            if (H_goal == nullptr) {
+                OPEN.push_back(H);
+            } else {
+                // 放回原来的区域
+                if (selected_phase == 0) {
+                    OPEN.insert(OPEN.begin(), H);
+                    boundary[0]++;
+                    boundary[1]++;
+                } else if (selected_phase == 1) {
+                    OPEN.insert(OPEN.begin() + boundary[0], H);
+                    boundary[1]++;
+                } else {
+                    OPEN.push_back(H);
+                }
+            }
+        }
+
+        // create new configuration
+        if (!get_new_config(H, L)) {
+            delete L;
+            if (selected_phase >= 0) {
+                phases[selected_phase].selection_count++;
+                total_ucb_selections++;
+                // 失败，0 奖励
+            }
+            continue;
+        }
+        delete L;
+
+        auto C_new = Config(N, State{nullptr});
+        for (auto a : A) {
+            C_new[a->id] = State{a->v_next, a->o_next};
+        }
+
+        // check explored
+        auto iter = EXPLORED.find(C_new);
+        if (iter != EXPLORED.end()) {
+            rewrite(H, iter->second, H_goal, OPEN, boundary);
+
+            if (selected_phase >= 0) {
+                phases[selected_phase].selection_count++;
+                total_ucb_selections++;
+                phases[selected_phase].total_reward += 0.05;
+            }
+        } else {
+            // ============================================================
+            // [核心修改] 新节点插入父节点所在的区域
+            // ============================================================
+            auto H_new = new HNode(C_new, D, H, H->g + get_edge_cost(H->C, C_new),
+                                   get_h_value(C_new));
+            EXPLORED[H_new->C] = H_new;
+            GC.push_back(H_new);
+
+            if (H_goal == nullptr) {
+                // 阶段1：直接放后端
+                OPEN.push_back(H_new);
+            } else {
+                // 阶段2：插入到父节点所在的区域
+                if (selected_phase == 0) {
+                    // 插入 Phase 0 的末尾
+                    OPEN.insert(OPEN.begin() + boundary[0], H_new);
+                    boundary[0]++;
+                    boundary[1]++;
+                } else if (selected_phase == 1) {
+                    // 插入 Phase 1 的末尾
+                    OPEN.insert(OPEN.begin() + boundary[1], H_new);
+                    boundary[1]++;
+                } else {
+                    // 插入 Phase 2 的末尾
+                    OPEN.push_back(H_new);
+                }
+            }
+
+            // 更新 UCB 奖励
+            if (selected_phase >= 0) {
+                phases[selected_phase].selection_count++;
+                total_ucb_selections++;
+
+                double reward = 0.1;
+                
+                if (is_same_config_pos(H_new->C, ins->goals)) {
+                    if (H_new->g < H_goal->g) {
+                        solver_info(1, "found better solution: ", H_goal->g, 
+                                   " -> ", H_new->g);
+                        H_goal = H_new;
+                        reward = 1.0;
+                    }
+                } else if (H_new->f < H->f) {
+                    reward = 0.5;
+                }
+                
+                phases[selected_phase].total_reward += reward;
             }
         }
     }
 
-    // 执行取操作
-    if (is_dfs_step) {
-        H = OPEN_DFS.top();
-        OPEN_DFS.pop();
-    } else {
-        H = OPEN_BFS.front();
-        OPEN_BFS.pop();
+    // 输出统计
+    solver_info(1, "end search, node_num: ", GC.size());
+    if (H_goal != nullptr) {
+        for (int i = 0; i < 3; ++i) {
+            double avg = (phases[i].selection_count > 0) ? 
+                         phases[i].total_reward / phases[i].selection_count : 0.0;
+            solver_info(1, "Phase ", i, ": selections=", phases[i].selection_count,
+                       " avg_reward=", avg);
+        }
     }
 
-    // 检查节点是否枯竭 (因为节点可能同时存在于两个队列，可能已经被另一个队列处理完了)
-    if (H->search_tree.empty()) {
-        continue;
+    // backtrack
+    if (H_goal == nullptr) {
+        for (auto h : GC) delete h;
+        return Solution();
     }
-
-    // check goal condition
-    if (H_goal == nullptr && is_same_config_pos(H->C, ins->goals)) {
-      H_goal = H;
-      solver_info(1, "found solution, cost: ", H->g);
-      
-      // [关键] 找到解后，H_goal 不再是 nullptr
-      // 下一次循环开始，current_dfs_ratio 就会自动变成 0.5
-      
-      if (objective == OBJ_NONE) break;
-      continue;
+    
+    auto solution = Solution();
+    auto H = H_goal;
+    while (H != nullptr) {
+        solution.push_back(H->C);
+        H = H->parent;
     }
+    std::reverse(solution.begin(), solution.end());
 
-    // check invalid nodes (剪枝)
-    // 无论是哪个队列拿出来的，只要比当前解差，就剪掉
-    if (H_goal != nullptr && H->f >= H_goal->f) {
-      continue;
-    }
-
-    // expand low-level search tree
-    auto L = H->search_tree.front();
-    H->search_tree.pop();
-    expand_lowlevel_tree(H, L);
-
-    // [回放策略] 如果还有剩余约束，放回原队列，保持该队列的连续性
-    if (!H->search_tree.empty()) {
-        if (is_dfs_step) OPEN_DFS.push(H);
-        else OPEN_BFS.push(H);
-    }
-
-    // create new configuration
-    if (!get_new_config(H, L)) {
-      delete L;
-      continue;
-    }
-    delete L;
-
-    auto C_new = Config(N, State{nullptr});
-    for (auto a : A) {
-      C_new[a->id] = State{a->v_next, a->o_next};
-    }
-
-    // check explored
-    auto iter = EXPLORED.find(C_new);
-    if (iter != EXPLORED.end()) {
-      // known config
-      // Rewrite 通常依然优先使用 DFS 队列，因为我们希望优化能尽快生效
-      rewrite(H, iter->second, H_goal, OPEN_DFS); 
-      
-      auto H_known = iter->second;
-      if (!H_known->search_tree.empty()) {
-          OPEN_DFS.push(H_known);
-          // 旧节点复活时，也可以选择加入 BFS，视内存情况而定
-          // OPEN_BFS.push(H_known); 
-      }
-    } else {
-      // new config
-      auto H_new = new HNode(C_new, D, H, H->g + get_edge_cost(H->C, C_new),
-                             get_h_value(C_new));
-      EXPLORED[H_new->C] = H_new;
-      GC.push_back(H_new);
-      
-      // [关键] 新节点必须同时加入两个队列
-      // 即使现在是 DFS 阶段 (Phase 1)，我们也必须把它放入 BFS 队列。
-      // 这样一旦找到解切换到 Phase 2，BFS 队列里才有“存档”可以读取。
-      OPEN_DFS.push(H_new);
-      OPEN_BFS.push(H_new);
-    }
-  }
-
-  solver_info(1, "end search, node_num: ", GC.size());
-
-  // backtrack
-  if (H_goal == nullptr) {
     for (auto h : GC) delete h;
-    return Solution();
-  }
-  auto solution = Solution();
-  auto H = H_goal;
-  while (H != nullptr) {
-    solution.push_back(H->C);
-    H = H->parent;
-  }
-  std::reverse(solution.begin(), solution.end());
-
-  for (auto h : GC) delete h;
-  return solution;
+    return solution;
 }
 
 
@@ -604,94 +897,135 @@ void Planner::PushEscapeTrigger(std::vector<Vertex*>& C, int pushed_agent_id, in
     }
 }
 
-void Planner::rewrite(HNode* H_from, HNode* T, HNode* H_goal,
-                      std::stack<HNode*>& OPEN) //本轮搜索从H_from触发，生成了new_config对应老节点T
-{
-  // update neighbors
-  // [修改] 原版是双向插入，现在我们只知道 H_from -> T 是刚才探索到的路径，肯定是合法的。
-  // T -> H_from 未必合法。
-  // 但为了保守起见，我们可以保留双向插入，但在下面的循环里严格检查 transition。
-  // 不过更严谨的做法是只插入单向，但 rewrite 需要反向传播优化，所以通常保留双向关系，
-  // 依靠 is_valid_transition 或修改 get_edge_cost 来过滤非法边。
+// 20260311初步测试可行，无ucb
+// void Planner::rewrite(HNode* H_from, HNode* T, HNode* H_goal,
+//                       std::stack<HNode*>& OPEN) //本轮搜索从H_from触发，生成了new_config对应老节点T
+// {
+//   // update neighbors
+//   // [修改] 原版是双向插入，现在我们只知道 H_from -> T 是刚才探索到的路径，肯定是合法的。
+//   // T -> H_from 未必合法。
+//   // 但为了保守起见，我们可以保留双向插入，但在下面的循环里严格检查 transition。
+//   // 不过更严谨的做法是只插入单向，但 rewrite 需要反向传播优化，所以通常保留双向关系，
+//   // 依靠 is_valid_transition 或修改 get_edge_cost 来过滤非法边。
   
-  // -------------------------------------------------------
-  // 第一步：建立图的连接关系 (Update Neighbors)
-  // -------------------------------------------------------
-  // 意义：LaCAM 即使是基于树的搜索，本质上也是在探索一个图。
-  // 这里记录 H_from 和 T 是互为邻居的。
-  // T 是我们在 EXPLORED 表里找到的“旧节点”，H_from 是我们刚刚生成的新节点。
-  // 图结构上，从 H_from 可以到 T，从 T 也可以到 H_from（假设是无向图，get_edge_cost控制局部搜索方向）
-  //T->neighbor.insert(H_from); 
-  H_from->neighbor.insert(T); //双向添加邻居3关系
-//   if (is_valid_transition(T->C, H_from->C, ins->G.width)) {
-//     T->neighbor.insert(H_from);
-//   }
-  T->neighbor.insert(H_from);
+//   // -------------------------------------------------------
+//   // 第一步：建立图的连接关系 (Update Neighbors)
+//   // -------------------------------------------------------
+//   // 意义：LaCAM 即使是基于树的搜索，本质上也是在探索一个图。
+//   // 这里记录 H_from 和 T 是互为邻居的。
+//   // T 是我们在 EXPLORED 表里找到的“旧节点”，H_from 是我们刚刚生成的新节点。
+//   // 图结构上，从 H_from 可以到 T，从 T 也可以到 H_from（假设是无向图，get_edge_cost控制局部搜索方向）
+//   //T->neighbor.insert(H_from); 
+//   H_from->neighbor.insert(T); //双向添加邻居3关系
+// //   if (is_valid_transition(T->C, H_from->C, ins->G.width)) {
+// //     T->neighbor.insert(H_from);
+// //   }
+//   T->neighbor.insert(H_from);
 
-  // Dijkstra
+//   // Dijkstra
 
-  // -------------------------------------------------------
-  // 第二步：初始化传播队列 (Dijkstra/BFS Initialization)
-  // -------------------------------------------------------
-  // 意义：我们需要从 H_from 开始，像波纹一样向外检查，看看有没有节点的 G 值（从起点到该点的代价）可以被更新。
-  // 使用队列 Q 来存储需要检查的节点。
-  std::queue<HNode*> Q;
-  Q.push(H_from);
-  Q.push(T); 
+//   // -------------------------------------------------------
+//   // 第二步：初始化传播队列 (Dijkstra/BFS Initialization)
+//   // -------------------------------------------------------
+//   // 意义：我们需要从 H_from 开始，像波纹一样向外检查，看看有没有节点的 G 值（从起点到该点的代价）可以被更新。
+//   // 使用队列 Q 来存储需要检查的节点。
+//   std::queue<HNode*> Q;
+//   Q.push(H_from);
+//   Q.push(T); 
   
-  // [新增] 如果我们要从 H_from 开始优化，我们应该也可以把 T 放进去，
-  // 因为 T 是刚刚发现的节点，它的 g 值可能也能优化别人。
-  // Q.push(T); 
+//   // [新增] 如果我们要从 H_from 开始优化，我们应该也可以把 T 放进去，
+//   // 因为 T 是刚刚发现的节点，它的 g 值可能也能优化别人。
+//   // Q.push(T); 
 
-  while (!Q.empty()) {
-    auto n_from = Q.front();
-    Q.pop();
+//   while (!Q.empty()) {
+//     auto n_from = Q.front();
+//     Q.pop();
     
-    // 遍历 n_from 的所有邻居 n_to
-    for (auto n_to : n_from->neighbor) {
+//     // 遍历 n_from 的所有邻居 n_to
+//     for (auto n_to : n_from->neighbor) {
 
-      // ----------------------------------------------------------------
-      // 只有当 n_from -> n_to 是物理合法的移动时，才允许更新
-      // ----------------------------------------------------------------
-      // if (!is_valid_transition(n_from->C, n_to->C, ins->G.width)) {
-      //     continue; // 物理不可达（例如倒着走），跳过！
-      // }
+//       // ----------------------------------------------------------------
+//       // 只有当 n_from -> n_to 是物理合法的移动时，才允许更新
+//       // ----------------------------------------------------------------
+//       // if (!is_valid_transition(n_from->C, n_to->C, ins->G.width)) {
+//       //     continue; // 物理不可达（例如倒着走），跳过！
+//       // }
 
-      // 意义：计算“如果走 n_from 这条路到达 n_to，总代价是多少？”
-      // n_from->g 是起点到 n_from 的代价。
-      // get_edge_cost 是 n_from 到 n_to 这一步的代价。
-      auto g_val = n_from->g + get_edge_cost(n_from->C, n_to->C);
-      // 如果发现通过n_from走代价更少，那么久更新
-      if (g_val < n_to->g) {
-        if (n_to == H_goal)
-          solver_info(1, "cost update: ", H_goal->g, " -> ", g_val);
+//       // 意义：计算“如果走 n_from 这条路到达 n_to，总代价是多少？”
+//       // n_from->g 是起点到 n_from 的代价。
+//       // get_edge_cost 是 n_from 到 n_to 这一步的代价。
+//       auto g_val = n_from->g + get_edge_cost(n_from->C, n_to->C);
+//       // 如果发现通过n_from走代价更少，那么久更新
+//       if (g_val < n_to->g) {
+//         if (n_to == H_goal)
+//           solver_info(1, "cost update: ", H_goal->g, " -> ", g_val);
         
-        n_to->g = g_val;
-        n_to->f = n_to->g + n_to->h;
-        // 重连父节点，以后回溯是n_to的前一步一定是n_from
+//         n_to->g = g_val;
+//         n_to->f = n_to->g + n_to->h;
+//         // 重连父节点，以后回溯是n_to的前一步一定是n_from
         
-        //n_to->parent = n_from;
+//         //n_to->parent = n_from;
 
-        // ============================================================
-        // [关键] 只有物理合法时才更新 parent
-        // ============================================================
-        if (is_valid_transition(n_from->C, n_to->C, ins->G.width)) {
-            n_to->parent = n_from;
-        }
+//         // ============================================================
+//         // [关键] 只有物理合法时才更新 parent
+//         // ============================================================
+//         if (is_valid_transition(n_from->C, n_to->C, ins->G.width)) {
+//             n_to->parent = n_from;
+//         }
    
-        // 意义：既然 n_to 的代价变小了，那么 n_to 的邻居（以及邻居的邻居）
-        // 如果通过 n_to 走，代价可能也会变小。
-        // 所以把 n_to 加入队列，下一轮循环去检查它的邻居。
-        Q.push(n_to);
+//         // 意义：既然 n_to 的代价变小了，那么 n_to 的邻居（以及邻居的邻居）
+//         // 如果通过 n_to 走，代价可能也会变小。
+//         // 所以把 n_to 加入队列，下一轮循环去检查它的邻居。
+//         Q.push(n_to);
 
-        // reinsert
-        // 意义：如果 n_to 的 F 值变得足够小（比当前找到的最好解 H_goal 还小），
-        // 说明它变成了一个很有潜力的节点，应该让高层搜索再次关注它。
-        // 把它放回 OPEN 表，让主循环有机会再次从它开始扩展。
-        if (H_goal != nullptr && n_to->f < H_goal->f) OPEN.push(n_to);
-      }
+//         // reinsert
+//         // 意义：如果 n_to 的 F 值变得足够小（比当前找到的最好解 H_goal 还小），
+//         // 说明它变成了一个很有潜力的节点，应该让高层搜索再次关注它。
+//         // 把它放回 OPEN 表，让主循环有机会再次从它开始扩展。
+//         if (H_goal != nullptr && n_to->f < H_goal->f) OPEN.push(n_to);
+//       }
+//     }
+//   }
+// }
+
+void Planner::rewrite(HNode* H_from, HNode* T, HNode* H_goal,
+                      std::deque<HNode*>& OPEN, size_t* boundary)
+{
+    H_from->neighbor.insert(T);
+    T->neighbor.insert(H_from);
+
+    std::queue<HNode*> Q;
+    Q.push(H_from);
+    Q.push(T);
+
+    while (!Q.empty()) {
+        auto n_from = Q.front();
+        Q.pop();
+
+        for (auto n_to : n_from->neighbor) {
+            auto g_val = n_from->g + get_edge_cost(n_from->C, n_to->C);
+            
+            if (g_val < n_to->g) {
+                if (n_to == H_goal)
+                    solver_info(1, "cost update: ", H_goal->g, " -> ", g_val);
+
+                n_to->g = g_val;
+                n_to->f = n_to->g + n_to->h;
+
+                if (is_valid_transition(n_from->C, n_to->C, ins->G.width)) {
+                    n_to->parent = n_from;
+                }
+
+                Q.push(n_to);
+                
+                // 被更新的节点如果有潜力，加入 Phase 2
+                if (H_goal != nullptr && n_to->f < H_goal->f) {
+                    OPEN.push_back(n_to);
+                    // 不更新边界，因为加到了 Phase 2
+                }
+            }
+        }
     }
-  }
 }
 
 // original edge cost

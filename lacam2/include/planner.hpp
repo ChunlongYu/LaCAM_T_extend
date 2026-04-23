@@ -144,8 +144,11 @@ struct Planner {
   ~Planner();
   Solution solve(std::string& additional_info);
   void expand_lowlevel_tree(HNode* H, LNode* L);
+  // 已测试可行rewrite，无ucb
+  // void rewrite(HNode* H_from, HNode* T, HNode* H_goal,
+  //              std::stack<HNode*>& OPEN);
   void rewrite(HNode* H_from, HNode* T, HNode* H_goal,
-               std::stack<HNode*>& OPEN);
+             std::deque<HNode*>& OPEN, size_t* boundary);
   uint get_edge_cost(const Config& C1, const Config& C2);
   uint get_edge_cost(HNode* H_from, HNode* H_to);
   uint get_h_value(const Config& C);
