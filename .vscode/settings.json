@@ -1,0 +1,9 @@
+{
+  "cmake.cmakePath": "/Applications/CMake.app/Contents/bin/cmake",
+  "cmake.configureArgs": [
+    "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+  ],
+  "cmake.environment": {
+    "PATH": "/Applications/CMake.app/Contents/bin:${env:PATH}"
+  }
+}

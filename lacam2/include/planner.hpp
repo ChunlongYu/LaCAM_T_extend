@@ -93,6 +93,11 @@ struct Planner {
   // hyper parameters
   const Objective objective;
   const float RESTART_RATE;  // random restart
+  const float EPSILON;         // bounded-gap early stop: stop when gap <= EPSILON
+  const std::string CONV_LOG;  // path to write UB/LB convergence log (empty = off)
+  const long PAIR_LB_MS;       // time budget (ms) for pairwise makespan root LB (0 = off)
+  const bool TRACK_BOUNDS;     // force-enable UB/LB sampling (else auto: on iff conv_log/epsilon)
+  const std::string INHERIT_LOG;  // path to per-expansion (inherit-count, reward) log (empty = off)
 
   // solver utils
   const uint N;       // number of agents
@@ -144,7 +149,12 @@ struct Planner {
           const int _verbose = 0,
           // other parameters
           const Objective _objective = OBJ_NONE,
-          const float _restart_rate = 0.001);
+          const float _restart_rate = 0.001,
+          const float _epsilon = 0.0,
+          const std::string& _conv_log = "",
+          const long _pair_lb_ms = 0,
+          const bool _track_bounds = false,
+          const std::string& _inherit_log = "");
   ~Planner();
   Solution solve(std::string& additional_info);
   void expand_lowlevel_tree(HNode* H, LNode* L);
@@ -155,6 +165,8 @@ struct Planner {
              std::deque<HNode*>& OPEN, size_t* boundary);
   uint get_edge_cost(const Config& C1, const Config& C2);
   uint get_edge_cost(HNode* H_from, HNode* H_to);
+  // [新增] pairwise makespan 静态根下界: max over 2-agent 联合最优 makespan
+  long compute_pairwise_makespan_lb(long budget_ms);
   uint get_h_value(const Config& C);
   bool get_new_config(HNode* H, LNode* L);
   bool funcPIBT(Agent* ai);

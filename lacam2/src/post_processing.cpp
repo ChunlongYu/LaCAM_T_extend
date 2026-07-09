@@ -307,8 +307,7 @@ void make_log(const Instance& ins, const Solution& solution,
       parse_optimal_from_info(additional_info, optimal_from_info);
   const bool optimal_by_makespan_lb =
       (!solution.empty() &&
-       static_cast<int>(solution.size()) ==
-           get_sum_of_costs_lower_bound(ins, dist_table));
+       get_makespan(solution) == get_makespan_lower_bound(ins, dist_table));
   const bool optimal =
       !solution.empty() && (optimal_by_makespan_lb ||
                             (has_optimal_in_info && optimal_from_info));

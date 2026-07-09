@@ -36,6 +36,26 @@ int main(int argc, char* argv[])
   program.add_argument("-r", "--restart_rate")
       .help("restart rate")
       .default_value(std::string("0.001"));
+  program.add_argument("-e", "--epsilon")
+      .help("bounded-gap early stop tolerance; stop when (UB-LB)/UB <= epsilon "
+            "(0 = run to exact optimality)")
+      .default_value(std::string("0.0"));
+  program.add_argument("--conv_log")
+      .help("path to write UB/LB convergence log (empty = disabled)")
+      .default_value(std::string(""));
+  program.add_argument("--pair_lb_ms")
+      .help("time budget (ms) for pairwise makespan root lower bound; 0 = off "
+            "(only used when --objective 1)")
+      .default_value(std::string("0"));
+  program.add_argument("--track_bounds")
+      .help("force-enable UB/LB sampling (optimal-by-bound & gap); auto-on when "
+            "--conv_log or --epsilon>0 is set")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("--inherit_log")
+      .help("path to per-expansion (priority-inheritance count, reward) CSV for "
+            "correlation analysis; empty = disabled")
+      .default_value(std::string(""));
 
   try {
     program.parse_known_args(argc, argv);
@@ -61,13 +81,20 @@ int main(int argc, char* argv[])
   const auto objective =
       static_cast<Objective>(std::stoi(program.get<std::string>("objective")));
   const auto restart_rate = std::stof(program.get<std::string>("restart_rate"));
+  const auto epsilon = std::stof(program.get<std::string>("epsilon"));
+  const auto conv_log = program.get<std::string>("conv_log");
+  const auto pair_lb_ms = std::stol(program.get<std::string>("pair_lb_ms"));
+  const auto track_bounds = program.get<bool>("track_bounds");
+  const auto inherit_log = program.get<std::string>("inherit_log");
   if (!ins.is_valid(1)) return 1;
 
   // solve
   auto additional_info = std::string("");
   const auto deadline = Deadline(time_limit_sec * 1000);
-  const auto solution = solve(ins, additional_info, verbose - 1, &deadline, &MT,
-                              objective, restart_rate);
+  const auto solution =
+      solve(ins, additional_info, verbose - 1, &deadline, &MT, objective,
+            restart_rate, epsilon, conv_log, pair_lb_ms, track_bounds,
+            inherit_log);
   const auto comp_time_ms = deadline.elapsed_ms();
 
   // failure

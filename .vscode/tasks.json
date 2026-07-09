@@ -1,0 +1,69 @@
+{
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "CMake: 配置并构建项目",
+            "command": "/Applications/CMake.app/Contents/bin/cmake",
+            "args": [
+                "-S",
+                "${workspaceFolder}",
+                "-B",
+                "${workspaceFolder}/build",
+                "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "使用 CMake 配置工程。"
+        },
+        {
+            "type": "shell",
+            "label": "CMake: 仅构建",
+            "command": "/Applications/CMake.app/Contents/bin/cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build",
+                "-j4"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "dependsOn": "CMake: 配置并构建项目",
+            "detail": "构建已配置的工程。"
+        },
+        {
+            "type": "shell",
+            "label": "运行: main 示例(loop)",
+            "command": "${workspaceFolder}/build/main",
+            "args": [
+                "-m",
+                "${workspaceFolder}/assets/loop.map",
+                "-i",
+                "${workspaceFolder}/assets/loop.scen",
+                "-N",
+                "3",
+                "-v",
+                "1",
+                "--objective",
+                "1"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "CMake: 仅构建",
+            "problemMatcher": [],
+            "detail": "先构建，再运行 main 示例。"
+        }
+    ],
+    "version": "2.0.0"
+}

@@ -1,0 +1,7 @@
+arm_id,num_selected,total_reward,avg_reward,final_ucb_score,reward_better_solution,reward_f_improve,reward_new_config,reward_known_config,reward_fail_new_config,initial_priority_inheritance_sum
+0,1938,104.650000,0.053999,0.205806,1,0,1021,33,116,7
+1,1571,80.050000,0.050955,0.205061,0,0,790,21,195,31
+2,409,19.500000,0.047677,0.370845,0,0,194,2,11,41
+3,382,18.900000,0.049476,0.375942,1,0,174,12,14,19
+4,312,13.050000,0.041827,0.372898,0,0,127,7,43,10
+5,9,0.000000,0.000000,1000000000.000000,0,0,0,0,0,4
