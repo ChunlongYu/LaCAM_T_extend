@@ -71,6 +71,7 @@ struct HNode {
   uint g;        // g-value (might be updated)
   const uint h;  // h-value
   uint f;        // g + h (might be updated)
+  const int priority_inheritance_count;  // counted when this config was created
 
   // for low-level search
   std::vector<float> priorities;
@@ -78,7 +79,7 @@ struct HNode {
   std::queue<LNode*> search_tree;
 
   HNode(const Config& _C, DistTable& D, HNode* _parent, const uint _g,
-        const uint _h);
+        const uint _h, const int _priority_inheritance_count = 0);
   ~HNode();
 };
 using HNodes = std::vector<HNode*>;
@@ -102,6 +103,9 @@ struct Planner {
   // used in PIBT
   std::vector<std::array<Vertex*, 5> > C_next;  // next locations, used in PIBT
   std::vector<float> tie_breakers;              // random values, used in PIBT
+  int current_priority_inheritance_count;       // per generated config
+  std::vector<bool> recursively_called_agents;  // rollback-safe counting
+  std::vector<uint> recursive_call_history;     // stack of first-time recursive calls
   Agents A;
   Agents occupied_now;                          // for quick collision checking
   Agents occupied_next;                         // for quick collision checking
@@ -185,5 +189,3 @@ struct Planner {
     info(level, verbose, (body)...);
   }
 };
-
-

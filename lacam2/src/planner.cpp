@@ -30,13 +30,14 @@ uint HNode::HNODE_CNT = 0;
 
 // for high-level
 HNode::HNode(const Config& _C, DistTable& D, HNode* _parent, const uint _g,
-             const uint _h)
+             const uint _h, const int _priority_inheritance_count)
     : C(_C),
       parent(_parent),
       neighbor(),
       g(_g),
       h(_h),
       f(g + h),
+      priority_inheritance_count(_priority_inheritance_count),
       priorities(C.size()),
       order(C.size(), 0),
       search_tree(std::queue<LNode*>())
@@ -95,6 +96,9 @@ Planner::Planner(const Instance* _ins, const Deadline* _deadline, std::mt19937* 
       loop_cnt(0),
       C_next(N),
       tie_breakers(V_size, 0),
+      current_priority_inheritance_count(0),
+      recursively_called_agents(N, false),
+      recursive_call_history(),
       A(N, nullptr),
       occupied_now(V_size, nullptr),
       occupied_next(V_size, nullptr),
@@ -103,6 +107,7 @@ Planner::Planner(const Instance* _ins, const Deadline* _deadline, std::mt19937* 
       push_count_table(N, std::vector<int>(N, 0))
 {
   modified_indices.reserve(N); // 测试：删除错误配置
+  recursive_call_history.reserve(N);
   for (uint i = 0; i < N; ++i) A[i] = new Agent(i);
 }
 
@@ -439,6 +444,7 @@ Planner::~Planner()
 Solution Planner::solve(std::string& additional_info)
 {
     solver_info(1, "start search");
+    in_optimization_phase = false;
 
     // setup agents
     for (uint i = 0; i < N; ++i) {
@@ -465,8 +471,15 @@ Solution Planner::solve(std::string& additional_info)
     // UCB 阶段统计
     // ============================================================
     struct PhaseStats {
+        int num_selected = 0;
         double total_reward = 0.0;
         int selection_count = 0;
+        int reward_fail_new_config = 0;
+        int reward_known_config = 0;
+        int reward_new_config = 0;
+        int reward_f_improve = 0;
+        int reward_better_solution = 0;
+        int initial_priority_inheritance_sum = 0;
         
         double getUCB(int total_sel, double c = 1.414) const {
             if (selection_count == 0) return 1e9;
@@ -475,15 +488,28 @@ Solution Planner::solve(std::string& additional_info)
         }
     };
     
-    PhaseStats phases[3];
+    constexpr int NUM_PHASES = 6;
+    constexpr int NUM_BOUNDARIES = NUM_PHASES - 1;
+    std::array<PhaseStats, NUM_PHASES> phases;
     int total_ucb_selections = 0;
 
     // ============================================================
     // [新增] 记录每个区域的边界索引
     // ============================================================
-    // 区域划分：[0, boundary[0]) [boundary[0], boundary[1]) [boundary[1], size)
-    // 即：      Phase 0           Phase 1                   Phase 2
-    size_t boundary[2] = {0, 0};  // 两个分界点
+    // 区域划分：
+    // Phase 0: [0, boundary[0))
+    // Phase i: [boundary[i-1], boundary[i)) for 1 <= i < NUM_PHASES - 1
+    // Phase N-1: [boundary[N-2], size)
+    std::array<size_t, NUM_BOUNDARIES> boundary{};
+
+    auto normalize_boundaries = [&](size_t n) {
+        for (int i = 0; i < NUM_BOUNDARIES; ++i) {
+            if (boundary[i] > n) boundary[i] = n;
+        }
+        for (int i = 1; i < NUM_BOUNDARIES; ++i) {
+            if (boundary[i] < boundary[i - 1]) boundary[i] = boundary[i - 1];
+        }
+    };
 
     while (!OPEN.empty() && !is_expired(deadline)) {
         loop_cnt += 1;
@@ -499,8 +525,7 @@ Solution Planner::solve(std::string& additional_info)
             OPEN.pop_back();
             
             // 更新边界（后端减少了一个）
-            if (boundary[1] > OPEN.size()) boundary[1] = OPEN.size();
-            if (boundary[0] > boundary[1]) boundary[0] = boundary[1];
+            normalize_boundaries(OPEN.size());
         } 
         else {
             // ============================================================
@@ -510,20 +535,14 @@ Solution Planner::solve(std::string& additional_info)
             if (n == 0) break;
 
             // 确保边界合法
-            if (boundary[0] > n) boundary[0] = n;
-            if (boundary[1] > n) boundary[1] = n;
-            if (boundary[1] < boundary[0]) boundary[1] = boundary[0];
-
-            // 计算各区域大小
-            size_t size_phase0 = boundary[0];
-            size_t size_phase1 = boundary[1] - boundary[0];
-            size_t size_phase2 = n - boundary[1];
+            normalize_boundaries(n);
 
             // 选择 UCB 最大且非空的区域
             double best_ucb = -1.0;
-            for (int i = 0; i < 3; ++i) {
-                size_t phase_size = (i == 0) ? size_phase0 : 
-                                    (i == 1) ? size_phase1 : size_phase2;
+            for (int i = 0; i < NUM_PHASES; ++i) {
+                size_t start_idx = (i == 0) ? 0 : boundary[i - 1];
+                size_t end_idx = (i == NUM_PHASES - 1) ? n : boundary[i];
+                size_t phase_size = end_idx - start_idx;
                 if (phase_size > 0) {
                     double ucb = phases[i].getUCB(total_ucb_selections);
                     if (ucb > best_ucb) {
@@ -537,37 +556,72 @@ Solution Planner::solve(std::string& additional_info)
             if (selected_phase < 0) {
                 H = OPEN.back();
                 OPEN.pop_back();
-                if (boundary[1] > OPEN.size()) boundary[1] = OPEN.size();
-                if (boundary[0] > boundary[1]) boundary[0] = boundary[1];
+                normalize_boundaries(OPEN.size());
             } else {
                 // 确定区间
-                size_t start_idx, end_idx;
-                if (selected_phase == 0) {
-                    start_idx = 0;
-                    end_idx = boundary[0];
-                } else if (selected_phase == 1) {
-                    start_idx = boundary[0];
-                    end_idx = boundary[1];
-                } else {
-                    start_idx = boundary[1];
-                    end_idx = n;
-                }
+                size_t start_idx = (selected_phase == 0) ? 0 : boundary[selected_phase - 1];
+                size_t end_idx = (selected_phase == NUM_PHASES - 1) ? n : boundary[selected_phase];
 
-                // 在区间内随机选择
-                std::uniform_int_distribution<size_t> dist(start_idx, end_idx - 1);
-                size_t chosen_idx = dist(*MT);
+                // 方案1:在区间内随机选择
+                // std::uniform_int_distribution<size_t> dist(start_idx, end_idx - 1);
+                // size_t chosen_idx = dist(*MT);
+
+                // 方案2：在区间内随机采样 K 个节点，再选择其中 f 最小的节点
+                // constexpr size_t K_SAMPLE = 8;
+                // const size_t phase_size = end_idx - start_idx;
+                // const size_t sample_cnt = std::min(K_SAMPLE, phase_size);
+
+                // std::vector<size_t> sampled_indices;
+                // sampled_indices.reserve(phase_size);
+                // for (size_t idx = start_idx; idx < end_idx; ++idx) {
+                //     sampled_indices.push_back(idx);
+                // }
+                // std::shuffle(sampled_indices.begin(), sampled_indices.end(), *MT);
+                // sampled_indices.resize(sample_cnt);
+
+                // size_t chosen_idx = sampled_indices[0];
+                // uint best_f = OPEN[chosen_idx]->f;
+                // for (size_t i = 1; i < sampled_indices.size(); ++i) {
+                //     size_t cand_idx = sampled_indices[i];
+                //     uint cand_f = OPEN[cand_idx]->f;
+                //     if (cand_f < best_f) {
+                //         best_f = cand_f;
+                //         chosen_idx = cand_idx;
+                //     }
+                // }
+                
+                // 方案3：在区间内随机采样 K 个节点，再选择其中 h 最小的节点
+                constexpr size_t K_SAMPLE = 8;
+                const size_t phase_size = end_idx - start_idx;
+                const size_t sample_cnt = std::min(K_SAMPLE, phase_size);
+
+                std::vector<size_t> sampled_indices;
+                sampled_indices.reserve(phase_size);
+                for (size_t idx = start_idx; idx < end_idx; ++idx) {
+                    sampled_indices.push_back(idx);
+                }
+                std::shuffle(sampled_indices.begin(), sampled_indices.end(), *MT);
+                sampled_indices.resize(sample_cnt);
+
+                size_t chosen_idx = sampled_indices[0];
+                uint best_h = OPEN[chosen_idx]->h;
+                for (size_t i = 1; i < sampled_indices.size(); ++i) {
+                    size_t cand_idx = sampled_indices[i];
+                    uint cand_h = OPEN[cand_idx]->h;
+                    if (cand_h < best_h) {
+                        best_h = cand_h;
+                        chosen_idx = cand_idx;
+                    }
+                }
 
                 H = OPEN[chosen_idx];
                 OPEN.erase(OPEN.begin() + chosen_idx);
+                phases[selected_phase].num_selected++;
 
                 // 更新边界（删除了一个元素）
-                if (chosen_idx < boundary[0]) {
-                    boundary[0]--;
-                    boundary[1]--;
-                } else if (chosen_idx < boundary[1]) {
-                    boundary[1]--;
+                for (int i = 0; i < NUM_BOUNDARIES; ++i) {
+                    if (chosen_idx < boundary[i]) boundary[i]--;
                 }
-                // 如果在 Phase 2 删除，边界不变
             }
         }
 
@@ -581,12 +635,24 @@ Solution Planner::solve(std::string& additional_info)
             H_goal = H;
             solver_info(1, "found initial solution, cost: ", H->g);
             
-            // 初始化边界：将当前 OPEN 三等分
+            // 初始化边界：将当前 OPEN 六等分
             size_t n = OPEN.size();
-            boundary[0] = n / 3;
-            boundary[1] = 2 * n / 3;
+            for (int i = 1; i <= NUM_BOUNDARIES; ++i) {
+                boundary[i - 1] = (static_cast<size_t>(i) * n) / NUM_PHASES;
+            }
+
+            for (int i = 0; i < NUM_PHASES; ++i) {
+                size_t start_idx = (i == 0) ? 0 : boundary[i - 1];
+                size_t end_idx = (i == NUM_PHASES - 1) ? n : boundary[i];
+                int sum_priority_inheritance = 0;
+                for (size_t idx = start_idx; idx < end_idx; ++idx) {
+                    sum_priority_inheritance += OPEN[idx]->priority_inheritance_count;
+                }
+                phases[i].initial_priority_inheritance_sum = sum_priority_inheritance;
+            }
             
             if (objective == OBJ_NONE) break;
+            in_optimization_phase = true;
             continue;
         }
 
@@ -608,15 +674,14 @@ Solution Planner::solve(std::string& additional_info)
                 OPEN.push_back(H);
             } else {
                 // 放回原来的区域
-                if (selected_phase == 0) {
-                    OPEN.insert(OPEN.begin(), H);
-                    boundary[0]++;
-                    boundary[1]++;
-                } else if (selected_phase == 1) {
-                    OPEN.insert(OPEN.begin() + boundary[0], H);
-                    boundary[1]++;
-                } else {
+                if (selected_phase < 0 || selected_phase == NUM_PHASES - 1) {
                     OPEN.push_back(H);
+                } else {
+                    size_t insert_pos = boundary[selected_phase];
+                    OPEN.insert(OPEN.begin() + insert_pos, H);
+                    for (int i = selected_phase; i < NUM_BOUNDARIES; ++i) {
+                        boundary[i]++;
+                    }
                 }
             }
         }
@@ -627,6 +692,7 @@ Solution Planner::solve(std::string& additional_info)
             if (selected_phase >= 0) {
                 phases[selected_phase].selection_count++;
                 total_ucb_selections++;
+                phases[selected_phase].reward_fail_new_config++;
                 // 失败，0 奖励
             }
             continue;
@@ -641,19 +707,22 @@ Solution Planner::solve(std::string& additional_info)
         // check explored
         auto iter = EXPLORED.find(C_new);
         if (iter != EXPLORED.end()) {
-            rewrite(H, iter->second, H_goal, OPEN, boundary);
+            rewrite(H, iter->second, H_goal, OPEN, boundary.data());
 
             if (selected_phase >= 0) {
                 phases[selected_phase].selection_count++;
                 total_ucb_selections++;
                 phases[selected_phase].total_reward += 0.05;
+                phases[selected_phase].reward_known_config++;
             }
         } else {
             // ============================================================
             // [核心修改] 新节点插入父节点所在的区域
             // ============================================================
+            const int priority_inheritance_count =
+                (H_goal == nullptr) ? current_priority_inheritance_count : 0;
             auto H_new = new HNode(C_new, D, H, H->g + get_edge_cost(H->C, C_new),
-                                   get_h_value(C_new));
+                                   get_h_value(C_new), priority_inheritance_count);
             EXPLORED[H_new->C] = H_new;
             GC.push_back(H_new);
 
@@ -662,18 +731,14 @@ Solution Planner::solve(std::string& additional_info)
                 OPEN.push_back(H_new);
             } else {
                 // 阶段2：插入到父节点所在的区域
-                if (selected_phase == 0) {
-                    // 插入 Phase 0 的末尾
-                    OPEN.insert(OPEN.begin() + boundary[0], H_new);
-                    boundary[0]++;
-                    boundary[1]++;
-                } else if (selected_phase == 1) {
-                    // 插入 Phase 1 的末尾
-                    OPEN.insert(OPEN.begin() + boundary[1], H_new);
-                    boundary[1]++;
-                } else {
-                    // 插入 Phase 2 的末尾
+                if (selected_phase < 0 || selected_phase == NUM_PHASES - 1) {
                     OPEN.push_back(H_new);
+                } else {
+                    size_t insert_pos = boundary[selected_phase];
+                    OPEN.insert(OPEN.begin() + insert_pos, H_new);
+                    for (int i = selected_phase; i < NUM_BOUNDARIES; ++i) {
+                        boundary[i]++;
+                    }
                 }
             }
 
@@ -683,6 +748,7 @@ Solution Planner::solve(std::string& additional_info)
                 total_ucb_selections++;
 
                 double reward = 0.1;
+                phases[selected_phase].reward_new_config++;
                 
                 if (is_same_config_pos(H_new->C, ins->goals)) {
                     if (H_new->g < H_goal->g) {
@@ -690,9 +756,11 @@ Solution Planner::solve(std::string& additional_info)
                                    " -> ", H_new->g);
                         H_goal = H_new;
                         reward = 1.0;
+                        phases[selected_phase].reward_better_solution++;
                     }
                 } else if (H_new->f < H->f) {
                     reward = 0.5;
+                    phases[selected_phase].reward_f_improve++;
                 }
                 
                 phases[selected_phase].total_reward += reward;
@@ -700,10 +768,12 @@ Solution Planner::solve(std::string& additional_info)
         }
     }
 
+    const bool open_exhausted = OPEN.empty();
+
     // 输出统计
     solver_info(1, "end search, node_num: ", GC.size());
     if (H_goal != nullptr) {
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < NUM_PHASES; ++i) {
             double avg = (phases[i].selection_count > 0) ? 
                          phases[i].total_reward / phases[i].selection_count : 0.0;
             solver_info(1, "Phase ", i, ": selections=", phases[i].selection_count,
@@ -711,8 +781,36 @@ Solution Planner::solve(std::string& additional_info)
         }
     }
 
+    additional_info += "mab_num_arms=" + std::to_string(NUM_PHASES) + "\n";
+    additional_info +=
+        "mab_arm_stats_header=arm_id\tnum_selected\ttotal_reward\tavg_reward\t"
+        "final_ucb_score\treward_better_solution\treward_f_improve\t"
+        "reward_new_config\treward_known_config\treward_fail_new_config\t"
+        "initial_priority_inheritance_sum\n";
+    for (int i = 0; i < NUM_PHASES; ++i) {
+      const auto& arm = phases[i];
+      const double avg_reward =
+          (arm.num_selected > 0) ? arm.total_reward / arm.num_selected : 0.0;
+      const double final_ucb_score = arm.getUCB(total_ucb_selections);
+      additional_info +=
+          "mab_arm_stats=" + std::to_string(i) + "\t" +
+          std::to_string(arm.num_selected) + "\t" +
+          std::to_string(arm.total_reward) + "\t" +
+          std::to_string(avg_reward) + "\t" +
+          std::to_string(final_ucb_score) + "\t" +
+          std::to_string(arm.reward_better_solution) + "\t" +
+          std::to_string(arm.reward_f_improve) + "\t" +
+          std::to_string(arm.reward_new_config) + "\t" +
+          std::to_string(arm.reward_known_config) + "\t" +
+          std::to_string(arm.reward_fail_new_config) + "\t" +
+          std::to_string(arm.initial_priority_inheritance_sum) + "\n";
+    }
+
     // backtrack
     if (H_goal == nullptr) {
+        additional_info += "optimal=false\n";
+        additional_info += "optimal_by_open_exhaustion=false\n";
+        additional_info += "optimal_by_makespan_lb=false\n";
         for (auto h : GC) delete h;
         return Solution();
     }
@@ -724,6 +822,22 @@ Solution Planner::solve(std::string& additional_info)
         H = H->parent;
     }
     std::reverse(solution.begin(), solution.end());
+
+    int soc_lower_bound = 0;
+    for (size_t i = 0; i < ins->N; ++i) {
+      soc_lower_bound += D.get(i, ins->starts[i]);
+    }
+    const bool optimal_by_open_exhaustion = open_exhausted;
+    const bool optimal_by_makespan_lb =
+        (static_cast<int>(solution.size()) == soc_lower_bound);
+    const bool optimal =
+        optimal_by_open_exhaustion || optimal_by_makespan_lb;
+    additional_info +=
+        std::string("optimal=") + (optimal ? "true" : "false") + "\n";
+    additional_info += std::string("optimal_by_open_exhaustion=") +
+                       (optimal_by_open_exhaustion ? "true" : "false") + "\n";
+    additional_info += std::string("optimal_by_makespan_lb=") +
+                       (optimal_by_makespan_lb ? "true" : "false") + "\n";
 
     for (auto h : GC) delete h;
     return solution;
@@ -1115,6 +1229,11 @@ uint Planner::get_h_value(const Config& C)
 
 bool Planner::get_new_config(HNode* H, LNode* L)
 {
+  current_priority_inheritance_count = 0;
+  std::fill(recursively_called_agents.begin(), recursively_called_agents.end(),
+            false);
+  recursive_call_history.clear();
+
   // setup cache
   for (auto a : A) {
     // clear previous cache
@@ -1349,6 +1468,12 @@ bool Planner::funcPIBT(Agent* ai, Agent* pusher, bool is_initial)
       initial_requester = ai;
   }
 
+  if (!is_initial && !in_optimization_phase && !recursively_called_agents[ai->id]) {
+      recursively_called_agents[ai->id] = true;
+      recursive_call_history.push_back(ai->id);
+      ++current_priority_inheritance_count;
+  }
+
   const auto i = ai->id;
 
   // if(ai->id == 1 or ai->id == 8){std::cout<<"-----start PIBT for a"<<ai->id<<"-----"<<std::endl;}
@@ -1496,6 +1621,7 @@ bool Planner::funcPIBT(Agent* ai, Agent* pusher, bool is_initial)
 
   // 遍历候选
   for (size_t k = 0; k < P.size(); ++k) {
+    const auto history_size_before_candidate = recursive_call_history.size();
     auto u = P[k];
     
     auto ak = occupied_now[u->id];
@@ -1527,6 +1653,12 @@ bool Planner::funcPIBT(Agent* ai, Agent* pusher, bool is_initial)
         // [关键修正 2] 将 'ai' 作为 pusher 传给 'ak'
         if (!funcPIBT(ak, ai, false)) { 
             request_chain.pop_back(); 
+            while (recursive_call_history.size() > history_size_before_candidate) {
+                auto rolled_back_id = recursive_call_history.back();
+                recursive_call_history.pop_back();
+                recursively_called_agents[rolled_back_id] = false;
+                --current_priority_inheritance_count;
+            }
             
             // 恢复状态
             ai->v_next = nullptr;
